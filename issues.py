@@ -2,6 +2,7 @@ import getpass
 import itertools
 import re
 from datetime import datetime
+from urlparse import parse_qs, urlparse
 
 import gdata.projecthosting.client
 from gdata.projecthosting.client import Query
@@ -32,6 +33,10 @@ class Attachment(object):
             self.type, self.index = 'comment', comment_id
         else:
             raise AssertionError('Unrecognized attachment %s' % node)
+
+    @property
+    def name(self):
+        return parse_qs(urlparse(url).query)['name'][0]
 
     def __repr__(self):
         d = self.__dict__.copy()
