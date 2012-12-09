@@ -24,6 +24,9 @@ class Attachment(object):
         self.node = node
         self.url = next(a.attrib['href'] for a in node.cssselect('a')
                         if a.text == 'Download')
+        # google code has download urls starting with "//"
+        if self.url.startswith('//'):
+            self.url = 'http:' + self.url
         parent = node.getparent()
         if 'issuedescription' in parent.attrib['class']:
             self.type, self.index = 'description', None
@@ -55,10 +58,6 @@ class Issue(Bunch):
     def attachments(self):
         return map(Attachment, self.scrap.cssselect('.attachments'))
 
-def step_queries(max_query_results):
-    for start_index in itertools.count(start=1, step=max_query_results):
-        yield Query(start_index = start_index,
-                    max_results = max_query_results)
 
 class GoogleCodeProject(object):
 
@@ -76,7 +75,13 @@ class GoogleCodeProject(object):
             self.client.client_login(email, password, 'migration')
 
     def get_issues(self, query=None):
-        queries = [query] if query else step_queries(self.max_query_results)
+        if query:
+            queries = [query]
+        else:
+            queries = (Query(start_index = start_index,
+                             max_results = self.max_query_results)
+                       for start_index in
+                       itertools.count(start=1, step=self.max_query_results))
         for query in queries:
             feed = self.client.get_issues(self.name, query = query)
             if feed.entry:
@@ -101,3 +106,5 @@ class GoogleCodeProject(object):
     def get_issue_by_id(self, issue_id):
         issues = list(self.get_issues(Query(issue_id=issue_id)))
         return issues[0] if issues else None
+
+
