@@ -7,6 +7,7 @@ from urlparse import parse_qs, urlparse
 import gdata.projecthosting.client
 from gdata.projecthosting.client import Query
 from lxml import html
+import requests
 
 
 class Bunch(object):
@@ -40,6 +41,10 @@ class Attachment(object):
     @property
     def name(self):
         return parse_qs(urlparse(url).query)['name'][0]
+
+    @property
+    def content(self):
+        return requests.get(self.url).content
 
     def __repr__(self):
         d = self.__dict__.copy()
