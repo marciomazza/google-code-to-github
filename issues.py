@@ -5,9 +5,9 @@ from datetime import datetime
 from urlparse import parse_qs, urlparse
 
 import gdata.projecthosting.client
+import requests
 from gdata.projecthosting.client import Query
 from lxml import html
-import requests
 
 
 class Bunch(object):
@@ -19,9 +19,12 @@ class Bunch(object):
     def __repr__(self):
         return self.__dict__.__repr__()
 
+RE_FILENAME = re.compile('filename="(.+)"$')
+
 class Attachment(object):
 
-    def __init__(self, node):
+    def __init__(self, issue, node):
+        self.issue = issue
         self.node = node
         self.url = next(a.attrib['href'] for a in node.cssselect('a')
                         if a.text == 'Download')
@@ -43,8 +46,13 @@ class Attachment(object):
         return parse_qs(urlparse(url).query)['name'][0]
 
     @property
-    def content(self):
-        return requests.get(self.url).content
+    def download(self):
+        req = requests.get(self.url)
+        return Bunch(
+            name=RE_FILENAME.search(req.headers['content-disposition']).group(1),
+            size=int(req.headers['content-length']),
+            content_type=req.headers['content-type'],
+            content = req.content,)
 
     def __repr__(self):
         d = self.__dict__.copy()
@@ -61,7 +69,7 @@ class Issue(Bunch):
 
     @property
     def attachments(self):
-        return map(Attachment, self.scrap.cssselect('.attachments'))
+        return [Attachment(self, node) for node in self.scrap.cssselect('.attachments')]
 
 
 class GoogleCodeProject(object):
@@ -93,6 +101,7 @@ class GoogleCodeProject(object):
                 for issue in feed.entry:
                     url = issue.link[1].href
                     yield Issue(
+                        project = self,
                         id = int(issue.id.text.split('/')[-1]),
                         status = issue.status.text.lower() if issue.status else None,
                         title = issue.title.text,
@@ -111,5 +120,3 @@ class GoogleCodeProject(object):
     def get_issue_by_id(self, issue_id):
         issues = list(self.get_issues(Query(issue_id=issue_id)))
         return issues[0] if issues else None
-
-
