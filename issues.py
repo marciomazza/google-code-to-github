@@ -57,18 +57,15 @@ class Attachment(object):
     @property
     def description(self):
         return 'Attachment from issue [%d] of google code project %s (original url: %s)' % (
-            self.issue.id,
-            self.issue.project.name,
-            self.url)
+            self.issue.id, self.issue.project.name, self.url)
 
     def download(self):
         req = requests.get(self.url)
         download_name=RE_FILENAME.search(req.headers['content-disposition']).group(1)
         assert download_name == self.original_name
-        return Bunch(
-            size=int(req.headers['content-length']),
-            content_type=req.headers['content-type'],
-            content = req.content,)
+        return Bunch(size=int(req.headers['content-length']),
+                     content_type=req.headers['content-type'],
+                     content = req.content,)
 
     def __repr__(self):
         d = self.__dict__.copy()
