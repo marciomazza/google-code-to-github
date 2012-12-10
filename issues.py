@@ -47,10 +47,12 @@ class Attachment(object):
             raise AssertionError('Unrecognized attachment %s' % node)
 
     @property
+    def original_name(self):
+        return parse_qs(urlparse(self.url).query)['name'][0]
+
+    @property
     def name(self):
-        return 'Issue_%s_%s' % (
-            self.issue.id,
-            parse_qs(urlparse(self.url).query)['name'][0])
+        return 'Issue_%s_%s' % (self.issue.id, self.original_name)
 
     @property
     def description(self):
@@ -61,6 +63,8 @@ class Attachment(object):
 
     def download(self):
         req = requests.get(self.url)
+        download_name=RE_FILENAME.search(req.headers['content-disposition']).group(1)
+        assert download_name == self.original_name
         return Bunch(
             size=int(req.headers['content-length']),
             content_type=req.headers['content-type'],
