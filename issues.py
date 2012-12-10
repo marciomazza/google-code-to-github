@@ -12,18 +12,25 @@ import requests
 from gdata.projecthosting.client import Query
 from lxml import html
 
-def _simple_repr(self):
-    return self.__dict__.__repr__()
 
-class Bunch(object):
-    "http://code.activestate.com/recipes/52308-the-simple-but-handy-collector-of-a-bunch-of-named"
+class SimpleRepr(object):
 
-    def __init__(self, **kwds):
-        self.__dict__.update(kwds)
+    def __repr__(self):
+        return self.__dict__.__repr__()
 
-    __repr__ = _simple_repr
 
-RE_FILENAME = re.compile('filename="(.+)"$')
+class Download(SimpleRepr):
+
+    RE_FILENAME = re.compile('filename="(.+)"$')
+
+    def __init__(self, attachment):
+        req = requests.get(attachment.url)
+        assert attachment.original_name == self.RE_FILENAME.search(
+            req.headers['content-disposition']).group(1)
+        self.size = int(req.headers['content-length'])
+        self.content_type = req.headers['content-type']
+        self.content = req.content
+
 
 class Attachment(object):
 
@@ -60,12 +67,7 @@ class Attachment(object):
             self.issue.id, self.issue.project.name, self.url)
 
     def download(self):
-        req = requests.get(self.url)
-        download_name=RE_FILENAME.search(req.headers['content-disposition']).group(1)
-        assert download_name == self.original_name
-        return Bunch(size=int(req.headers['content-length']),
-                     content_type=req.headers['content-type'],
-                     content = req.content,)
+        return Download(self)
 
     def __repr__(self):
         d = self.__dict__.copy()
@@ -83,7 +85,7 @@ def _init_common_fields(self, project, feed_entry, link_index_for_url):
     self.date = datetime.strptime(feed_entry.published.text, "%Y-%m-%dT%H:%M:%S.000Z")
 
 
-class Issue(object):
+class Issue(SimpleRepr):
 
     def __init__(self, project, feed_entry):
         _init_common_fields(self, project, feed_entry, 1)
@@ -104,14 +106,12 @@ class Issue(object):
         else:
             return [a for a in self._attachments if a.place == place]
 
-    __repr__ = _simple_repr
 
-class Comment(Issue):
+class Comment(SimpleRepr):
 
     def __init__(self, project, feed_entry):
         _init_common_fields(self, project, feed_entry, 0)
 
-    __repr__ = _simple_repr
 
 class GoogleCodeProject(object):
 
@@ -182,16 +182,17 @@ class GithubMigrator(object):
         with tempfile.NamedTemporaryFile(delete=False) as download_file:
             download_file.write(download.content)
         subp = subprocess.Popen(['curl',
-        '-F', 'key=' + res.path,
-        '-F', 'acl=' + res.acl,
-        '-F', 'success_action_status=201',
-        '-F', 'Filename=' + res.name,
-        '-F', 'AWSAccessKeyId=' + res.accesskeyid,
-        '-F', 'Policy=' + res.policy,
-        '-F', 'Signature=' + res.signature,
-        '-F', 'Content-Type=' + res.mime_type,
-        '-F', 'file=@' + download_file.name,
-        'https://github.s3.amazonaws.com/'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                                 '-F', 'key=' + res.path,
+                                 '-F', 'acl=' + res.acl,
+                                 '-F', 'success_action_status=201',
+                                 '-F', 'Filename=' + res.name,
+                                 '-F', 'AWSAccessKeyId=' + res.accesskeyid,
+                                 '-F', 'Policy=' + res.policy,
+                                 '-F', 'Signature=' + res.signature,
+                                 '-F', 'Content-Type=' + res.mime_type,
+                                 '-F', 'file=@' + download_file.name,
+                                 'https://github.s3.amazonaws.com/'],
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         curlstdout, curlstderr = subp.communicate()
         os.remove(download_file.name)
         return 'https://github.com/' + res.path
