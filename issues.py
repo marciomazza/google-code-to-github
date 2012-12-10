@@ -12,6 +12,8 @@ import requests
 from gdata.projecthosting.client import Query
 from lxml import html
 
+def _simple_repr(self):
+    return self.__dict__.__repr__()
 
 class Bunch(object):
     "http://code.activestate.com/recipes/52308-the-simple-but-handy-collector-of-a-bunch-of-named"
@@ -19,8 +21,7 @@ class Bunch(object):
     def __init__(self, **kwds):
         self.__dict__.update(kwds)
 
-    def __repr__(self):
-        return self.__dict__.__repr__()
+    __repr__ = _simple_repr
 
 RE_FILENAME = re.compile('filename="(.+)"$')
 
@@ -70,20 +71,22 @@ class Attachment(object):
         del d['node']
         return d.__repr__()
 
+def _init_common_fields(self, project, feed_entry, link_index_for_url):
+    self.project = project
+    self.feed_entry = feed_entry
+    self.id = int(feed_entry.id.text.split('/')[-1])
+    self.title = feed_entry.title.text
+    self.url = feed_entry.link[link_index_for_url].href
+    self.author = feed_entry.author[0].name.text
+    self.content = feed_entry.content.text
+    self.date = datetime.strptime(feed_entry.published.text, "%Y-%m-%dT%H:%M:%S.000Z")
+
 
 class Issue(object):
 
     def __init__(self, project, feed_entry):
-        self.project = project
-        self.feed_entry = feed_entry
-        self.id = int(feed_entry.id.text.split('/')[-1])
+        _init_common_fields(self, project, feed_entry, 1)
         self.status = feed_entry.status.text.lower() if feed_entry.status else None
-        self.title = feed_entry.title.text
-        self.url = feed_entry.link[1].href
-        self.authors = [a.name.text for a in feed_entry.author]
-        self.content = feed_entry.content.text
-        self.date = datetime.strptime(
-            feed_entry.published.text, "%Y-%m-%dT%H:%M:%S.000Z")
         self.labels = [l.text for l in feed_entry.label]
         self.owner = feed_entry.owner.username.text if feed_entry.owner else None
 
@@ -100,6 +103,14 @@ class Issue(object):
         else:
             return [a for a in self._attachments if a.place == place]
 
+    __repr__ = _simple_repr
+
+class Comment(Issue):
+
+    def __init__(self, project, feed_entry):
+        _init_common_fields(self, project, feed_entry, 0)
+
+    __repr__ = _simple_repr
 
 class GoogleCodeProject(object):
 
@@ -118,19 +129,30 @@ class GoogleCodeProject(object):
             password = password or getpass.getpass("Type the google password for %s" % email)
             self.client.client_login(email, password, 'migration')
 
-    def get_issues(self, query=None):
-        if query:
-            queries = [query]
+    def get_issues(self, specific_query=None):
+        return self._get_items(
+            lambda q: self.client.get_issues(self.name, query = q),
+            Issue, specific_query)
+
+    def get_comments(self, issue_id, specific_query=None):
+        return self._get_items(
+            lambda q: self.client.get_comments(self.name, issue_id, query = q),
+            Comment, specific_query)
+
+    def _get_items(self, feed_by_query, item_class, specific_query=None):
+        if specific_query:
+            queries = [specific_query]
         else:
+            # fetch N entries, first starting from 1, then from 1+N, 1+2N, ...
             queries = (Query(start_index = start_index,
                              max_results = self.max_query_results)
                        for start_index in
                        itertools.count(start=1, step=self.max_query_results))
         for query in queries:
-            feed = self.client.get_issues(self.name, query = query)
+            feed = feed_by_query(query)
             if feed.entry:
                 for entry in feed.entry:
-                    yield Issue(self, entry)
+                    yield item_class(self, entry)
             else:
                 break
 
