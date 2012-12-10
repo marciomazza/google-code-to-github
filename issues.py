@@ -12,12 +12,10 @@ import requests
 from gdata.projecthosting.client import Query
 from lxml import html
 
-
 class SimpleRepr(object):
 
     def __repr__(self):
         return self.__dict__.__repr__()
-
 
 class Download(SimpleRepr):
 
@@ -74,8 +72,7 @@ class Attachment(object):
         del d['node']
         return d.__repr__()
 
-def _init_common_fields(self, project, feed_entry, link_index_for_url):
-    self.project = project
+def _init_common_fields(self, feed_entry, link_index_for_url):
     self.feed_entry = feed_entry
     self.id = int(feed_entry.id.text.split('/')[-1])
     self.title = feed_entry.title.text
@@ -88,7 +85,8 @@ def _init_common_fields(self, project, feed_entry, link_index_for_url):
 class Issue(SimpleRepr):
 
     def __init__(self, project, feed_entry):
-        _init_common_fields(self, project, feed_entry, 1)
+        _init_common_fields(self, feed_entry, 1)
+        self.project = project
         self.status = feed_entry.status.text.lower() if feed_entry.status else None
         self.labels = [l.text for l in feed_entry.label]
         self.owner = feed_entry.owner.username.text if feed_entry.owner else None
@@ -106,11 +104,18 @@ class Issue(SimpleRepr):
         else:
             return [a for a in self._attachments if a.place == place]
 
+    @property
+    def comments(self):
+        if not hasattr(self, '_comments'):
+            self._comments = list(self.project.get_comments(self))
+        return self._comments
+
 
 class Comment(SimpleRepr):
 
-    def __init__(self, project, feed_entry):
-        _init_common_fields(self, project, feed_entry, 0)
+    def __init__(self, issue, feed_entry):
+        _init_common_fields(self, feed_entry, 0)
+        self.issue = issue
 
 
 class GoogleCodeProject(object):
@@ -132,15 +137,17 @@ class GoogleCodeProject(object):
 
     def get_issues(self, specific_query=None):
         return self._get_items(
-            lambda q: self.client.get_issues(self.name, query = q),
-            Issue, specific_query)
+            lambda query: self.client.get_issues(self.name, query = query),
+            lambda entry: Issue(self, entry),
+            specific_query)
 
-    def get_comments(self, issue_id, specific_query=None):
+    def get_comments(self, issue, specific_query=None):
         return self._get_items(
-            lambda q: self.client.get_comments(self.name, issue_id, query = q),
-            Comment, specific_query)
+            lambda query: self.client.get_comments(self.name, issue.id, query = query),
+            lambda entry: Comment(issue, entry),
+            specific_query)
 
-    def _get_items(self, feed_by_query, item_class, specific_query=None):
+    def _get_items(self, query_to_feed, entry_to_item, specific_query=None):
         if specific_query:
             queries = [specific_query]
         else:
@@ -150,16 +157,17 @@ class GoogleCodeProject(object):
                        for start_index in
                        itertools.count(start=1, step=self.max_query_results))
         for query in queries:
-            feed = feed_by_query(query)
+            feed = query_to_feed(query)
             if feed.entry:
                 for entry in feed.entry:
-                    yield item_class(self, entry)
+                    yield entry_to_item(entry)
             else:
                 break
 
     def get_issue_by_id(self, issue_id):
         issues = list(self.get_issues(Query(issue_id=issue_id)))
         return issues[0] if issues else None
+
 
 class GithubMigrator(object):
 
