@@ -1,6 +1,9 @@
 import getpass
 import itertools
+import os
 import re
+import subprocess
+import tempfile
 from datetime import datetime
 from urlparse import parse_qs, urlparse
 
@@ -43,13 +46,20 @@ class Attachment(object):
 
     @property
     def name(self):
-        return parse_qs(urlparse(url).query)['name'][0]
+        return 'Issue_%s_%s' % (
+            self.issue.id,
+            parse_qs(urlparse(self.url).query)['name'][0])
 
     @property
+    def description(self):
+        return 'Attachment from issue [%d] of google code project %s (original url: %s)' % (
+            self.issue.id,
+            self.issue.project.name,
+            self.url)
+
     def download(self):
         req = requests.get(self.url)
         return Bunch(
-            name=RE_FILENAME.search(req.headers['content-disposition']).group(1),
             size=int(req.headers['content-length']),
             content_type=req.headers['content-type'],
             content = req.content,)
@@ -80,6 +90,8 @@ class GoogleCodeProject(object):
         """
         Arguments:
         - `name`: Google Code project name
+        - `email`: login email, if you want to log in (optional)
+        - `name` : login password (optional)
         """
         self.name = name
         self.client = gdata.projecthosting.client.ProjectHostingClient()
@@ -120,3 +132,37 @@ class GoogleCodeProject(object):
     def get_issue_by_id(self, issue_id):
         issues = list(self.get_issues(Query(issue_id=issue_id)))
         return issues[0] if issues else None
+
+class GithubMigrator(object):
+
+    def __init__(self, repo):
+        """
+        Arguments:
+        - `repo`: a github.Repository.Repository to migrate to
+        """
+        self.repo = repo
+
+    def upload_attachment(self, attachment):
+        download = attachment.download()
+        res = self.repo.create_download(name=attachment.name,
+                                        description=attachment.description,
+                                        size=download.size,
+                                        content_type=download.content_type,)
+        # there should be a better way to do this, but I couldn't
+        # good enough is the new black
+        with tempfile.NamedTemporaryFile(delete=False) as download_file:
+            download_file.write(download.content)
+        subp = subprocess.Popen(['curl',
+        '-F', 'key=' + res.path,
+        '-F', 'acl=' + res.acl,
+        '-F', 'success_action_status=201',
+        '-F', 'Filename=' + res.name,
+        '-F', 'AWSAccessKeyId=' + res.accesskeyid,
+        '-F', 'Policy=' + res.policy,
+        '-F', 'Signature=' + res.signature,
+        '-F', 'Content-Type=' + res.mime_type,
+        '-F', 'file=@' + download_file.name,
+        'https://github.s3.amazonaws.com/'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        curlstdout, curlstderr = subp.communicate()
+        os.remove(download_file.name)
+        return 'https://github.com/' + res.path
