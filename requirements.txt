@@ -1,0 +1,5 @@
+gdata
+PyGithub
+lxml
+cssselect
+requests
