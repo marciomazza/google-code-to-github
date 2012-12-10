@@ -69,17 +69,30 @@ class Attachment(object):
         del d['node']
         return d.__repr__()
 
-class Issue(Bunch):
 
-    @property
-    def scrap(self):
-        if not hasattr(self, '_scrap') or not self._scrap:
-            self._scrap = html.parse(self.url).getroot()
-        return self._scrap
+class Issue(object):
+
+    def __init__(self, project, feed_entry):
+        self.project = project
+        self.feed_entry = feed_entry
+        self.id = int(feed_entry.id.text.split('/')[-1])
+        self.status = feed_entry.status.text.lower() if feed_entry.status else None
+        self.title = feed_entry.title.text
+        self.url = feed_entry.link[1].href
+        self.authors = [a.name.text for a in feed_entry.author]
+        self.content = feed_entry.content.text
+        self.date = datetime.strptime(
+            feed_entry.published.text, "%Y-%m-%dT%H:%M:%S.000Z")
+        self.labels = [l.text for l in feed_entry.label]
+        self.owner = feed_entry.owner.username.text if feed_entry.owner else None
 
     @property
     def attachments(self):
-        return [Attachment(self, node) for node in self.scrap.cssselect('.attachments')]
+        if not hasattr(self, '_attachments'):
+            scrap = html.parse(self.url).getroot()
+            self._attachments = [Attachment(self, node)
+                                 for node in scrap.cssselect('.attachments')]
+        return self._attachments
 
 
 class GoogleCodeProject(object):
@@ -110,22 +123,8 @@ class GoogleCodeProject(object):
         for query in queries:
             feed = self.client.get_issues(self.name, query = query)
             if feed.entry:
-                for issue in feed.entry:
-                    url = issue.link[1].href
-                    yield Issue(
-                        project = self,
-                        id = int(issue.id.text.split('/')[-1]),
-                        status = issue.status.text.lower() if issue.status else None,
-                        title = issue.title.text,
-                        url = url,
-                        authors = [a.name.text for a in issue.author],
-                        content = issue.content.text,
-                        date = datetime.strptime(
-                            issue.published.text, "%Y-%m-%dT%H:%M:%S.000Z"),
-                        labels = [l.text for l in issue.label],
-                        owner = issue.owner.username.text if issue.owner else None,
-                        raw = issue,
-                        )
+                for entry in feed.entry:
+                    yield Issue(self, entry)
             else:
                 break
 
@@ -150,6 +149,7 @@ class GithubMigrator(object):
                                         content_type=download.content_type,)
         # there should be a better way to do this, but I couldn't
         # good enough is the new black
+        # see http://developer.github.com/v3/repos/downloads/#create-a-new-download-part-2-upload-file-to-s3
         with tempfile.NamedTemporaryFile(delete=False) as download_file:
             download_file.write(download.content)
         subp = subprocess.Popen(['curl',
