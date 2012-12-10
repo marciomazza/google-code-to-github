@@ -4,6 +4,7 @@ import os
 import re
 import subprocess
 import tempfile
+from collections import defaultdict
 from datetime import datetime
 from urlparse import parse_qs, urlparse
 
@@ -11,6 +12,7 @@ import gdata.projecthosting.client
 import requests
 from gdata.projecthosting.client import Query
 from lxml import html
+
 
 class SimpleRepr(object):
 
@@ -32,6 +34,8 @@ class Download(SimpleRepr):
 
 class Attachment(object):
 
+    DESCRIPTION_PLACE = 0
+
     def __init__(self, issue, node):
         self.issue = issue
         self.node = node
@@ -40,10 +44,13 @@ class Attachment(object):
         # google code has download urls starting with "//"
         if self.url.startswith('//'):
             self.url = 'http:' + self.url
+        # classify by place of occurrence
+        # 0 for an attachment in the description,
+        # N for an attachment in comment N
         parent = node.getparent()
         if 'issuedescription' in parent.attrib['class']:
             # zero for an attachment in the description
-            self.place = 0
+            self.place = Attachment.DESCRIPTION_PLACE
         elif 'issuecomment' in parent.attrib['class']:
             comment_id =int(re.search(r'\d+$',
                                       parent.attrib['id']).group())
@@ -91,18 +98,20 @@ class Issue(SimpleRepr):
         self.labels = [l.text for l in feed_entry.label]
         self.owner = feed_entry.owner.username.text if feed_entry.owner else None
 
-    def attachments(self, place=None):
-        '''place: 0 for attachments in the description,
-                  N for attachments in comment N
-        '''
-        if not hasattr(self, '_attachments'):
+    @property
+    def all_attachments_by_place(self):
+        if not hasattr(self, '_all_attachments_by_place'):
             scrap = html.parse(self.url).getroot()
-            self._attachments = [Attachment(self, node)
-                                 for node in scrap.cssselect('.attachments')]
-        if place is None:
-            return self._attachments
-        else:
-            return [a for a in self._attachments if a.place == place]
+            self._all_attachments_by_place = defaultdict(list)
+            for node in scrap.cssselect('.attachments'):
+                att = Attachment(self, node)
+                self._all_attachments_by_place[att.place].append(att)
+        return self._all_attachments_by_place
+
+    @property
+    def attachments(self):
+        '''Attachments only in the description, i.e., not in comments'''
+        return self.all_attachments_by_place[Attachment.DESCRIPTION_PLACE]
 
     @property
     def comments(self):
@@ -116,6 +125,10 @@ class Comment(SimpleRepr):
     def __init__(self, issue, feed_entry):
         _init_common_fields(self, feed_entry, 0)
         self.issue = issue
+
+    @property
+    def attachments(self):
+        return self.issue.all_attachments_by_place[self.id]
 
 
 class GoogleCodeProject(object):
