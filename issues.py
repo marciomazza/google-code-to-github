@@ -36,11 +36,12 @@ class Attachment(object):
             self.url = 'http:' + self.url
         parent = node.getparent()
         if 'issuedescription' in parent.attrib['class']:
-            self.type, self.index = 'description', None
+            # zero for an attachment in the description
+            self.place = 0
         elif 'issuecomment' in parent.attrib['class']:
             comment_id =int(re.search(r'\d+$',
                                       parent.attrib['id']).group())
-            self.type, self.index = 'comment', comment_id
+            self.place = comment_id
         else:
             raise AssertionError('Unrecognized attachment %s' % node)
 
@@ -86,13 +87,18 @@ class Issue(object):
         self.labels = [l.text for l in feed_entry.label]
         self.owner = feed_entry.owner.username.text if feed_entry.owner else None
 
-    @property
-    def attachments(self):
+    def attachments(self, place=None):
+        '''place: 0 for attachments in the description,
+                  N for attachments in comment N
+        '''
         if not hasattr(self, '_attachments'):
             scrap = html.parse(self.url).getroot()
             self._attachments = [Attachment(self, node)
                                  for node in scrap.cssselect('.attachments')]
-        return self._attachments
+        if place is None:
+            return self._attachments
+        else:
+            return [a for a in self._attachments if a.place == place]
 
 
 class GoogleCodeProject(object):
