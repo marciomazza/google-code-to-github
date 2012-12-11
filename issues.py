@@ -11,6 +11,7 @@ from urlparse import parse_qs, urlparse
 import gdata.projecthosting.client
 import requests
 from gdata.projecthosting.client import Query
+from jinja2 import Environment, FileSystemLoader
 from lxml import html
 
 
@@ -201,15 +202,24 @@ class GoogleCodeProject(object):
         issues = list(self.get_issues(Query(issue_id=issue_id)))
         return issues[0] if issues else None
 
-
 class GithubMigrator(object):
 
-    def __init__(self, repo):
+    def __init__(self, github, repo,
+                 google_to_github_issue_ids, google_to_github_authors, google_to_github_labels):
         """
         Arguments:
+        - `github`: a github.Github
         - `repo`: a github.Repository.Repository to migrate to
         """
+        def find_user(author):
+            github_login = google_to_github_authors[author]
+            return github.get_user(github_login) if github_login else None
+
+        self.github = github
         self.repo = repo
+        self.issue_template = get_issue_template(repo, CacheDict(find_user))
+        self.google_to_github_issue_ids = google_to_github_issue_ids
+        self.google_to_github_labels = google_to_github_labels
 
     def upload_attachment(self, attachment):
         download = attachment.download()
@@ -238,4 +248,37 @@ class GithubMigrator(object):
         os.remove(download_file.name)
         return 'https://github.com/' + res.path
 
+    def migrate_issue_content(self, issue):
+        github_id = self.google_to_github_issue_ids[issue.id]
+        github_issue = self.repo.get_issue(github_id)
+        github_issue.edit(body=self.issue_template.render(issue=issue))
+        print 'Google issue [%s] migrated to GitHub issue [%s]' % (
+            issue.id, github_id)
 
+def get_issue_template(repo, author_to_github_user):
+
+    def github_user(author):
+        user = author_to_github_user[author]
+        if user:
+            return '[%s](%s)' % (user.name, user.html_url)
+        else:
+            return '*%s*' % author
+
+    def github_download_url(name):
+        return 'https://github.com/downloads/%s/%s/%s' % tuple(
+            repo.html_url.split('/')[-2:] + [name])
+
+    def blockquote(lines):
+        return ''.join(['> %s' % l for l in lines.splitlines(True)])
+
+    environment = Environment(loader=FileSystemLoader('.'))
+    environment.globals['github_user'] = github_user
+    environment.globals['github_download_url'] = github_download_url
+    environment.globals['blockquote'] = blockquote
+    return environment.get_template('issue_template.md')
+
+class CacheDict(defaultdict):
+
+    def __missing__(self, key):
+        self[key] = value = self.default_factory(key)
+        return value

@@ -3,3 +3,4 @@ PyGithub
 lxml
 cssselect
 requests
+Jinja2
