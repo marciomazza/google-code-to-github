@@ -11,6 +11,7 @@ from urlparse import parse_qs, urlparse
 import gdata.projecthosting.client
 import requests
 from gdata.projecthosting.client import Query
+from github import GithubException
 from jinja2 import Environment, FileSystemLoader
 from lxml import html
 
@@ -140,6 +141,9 @@ class Issue(SimpleRepr):
             self._comments = list(self.project.get_comments(self))
         return self._comments
 
+    def all_authors_involved(self):
+        return set(x.author for x in [self] + self.comments)
+
 
 class Comment(SimpleRepr):
 
@@ -202,7 +206,16 @@ class GoogleCodeProject(object):
         issues = list(self.get_issues(Query(issue_id=issue_id)))
         return issues[0] if issues else None
 
+
 class GithubMigrator(object):
+
+    google_status_to_github_state = {
+        'fixed' : 'closed',
+        'new' : 'open',
+        None: 'open',
+        'wontfix' : 'closed', # TODO: do something more about this
+        'invalid': 'closed',  # TODO: do something more about this
+        }
 
     def __init__(self, github, repo,
                  google_to_github_issue_ids, google_to_github_authors, google_to_github_labels):
@@ -248,12 +261,29 @@ class GithubMigrator(object):
         os.remove(download_file.name)
         return 'https://github.com/' + res.path
 
-    def migrate_issue_content(self, issue):
+    def migrate_issue(self, issue):
+        for att_list in issue.all_attachments_by_place.values():
+            for att in att_list:
+                try:
+                    self.upload_attachment(att)
+                except GithubException as e:
+                    # we're just trying to upload again
+                    if e.data['errors'][0] == {u'field': u'name',
+                                               u'code': u'already_exists',
+                                               u'resource': u'Download'}:
+                        pass
+                    else:
+                        raise e
         github_id = self.google_to_github_issue_ids[issue.id]
         github_issue = self.repo.get_issue(github_id)
-        github_issue.edit(body=self.issue_template.render(issue=issue))
+        github_issue.edit(
+            title=issue.title,
+            body=self.issue_template.render(issue=issue),
+            state = self.google_status_to_github_state[issue.status],
+            labels=[self.google_to_github_labels[l] for l in issue.labels],)
         print 'Google issue [%s] migrated to GitHub issue [%s]' % (
             issue.id, github_id)
+
 
 def get_issue_template(repo, author_to_github_user):
 
@@ -269,6 +299,9 @@ def get_issue_template(repo, author_to_github_user):
             repo.html_url.split('/')[-2:] + [name])
 
     def blockquote(lines):
+        # TODO: check if this is indeed useful
+        if lines is None:
+            lines = '*(No comment was entered for this change.)*'
         return ''.join(['> %s' % l for l in lines.splitlines(True)])
 
     environment = Environment(loader=FileSystemLoader('.'))
@@ -282,3 +315,13 @@ class CacheDict(defaultdict):
     def __missing__(self, key):
         self[key] = value = self.default_factory(key)
         return value
+
+# migration utils
+
+def create_empty_issue(repo):
+    repo.create_issue('-- empty issue for migration from google code --',
+                      'This is a temporary empty slot to received a migrated issue from google code.')
+
+def all_authors_involved(issues):
+   return reduce(set.union, [i.all_authors_involved() for i in issues])
+
