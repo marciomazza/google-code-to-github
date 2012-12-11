@@ -19,6 +19,18 @@ class SimpleRepr(object):
     def __repr__(self):
         return self.__dict__.__repr__()
 
+# based on http://getpython3.com/diveintopython3/examples/humansize.py
+def human_readable_size(size):
+    if size < 0:
+        raise ValueError('number must be non-negative')
+    size = float(size)
+    for suffix in ['KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB']:
+        size /= 1000
+        if size < 1000:
+            return '{0:.1f} {1}'.format(size, suffix)
+    raise ValueError('number too large')
+
+
 class Download(SimpleRepr):
 
     RE_FILENAME = re.compile('filename="(.+)"$')
@@ -72,7 +84,15 @@ class Attachment(object):
             self.issue.id, self.issue.project.name, self.url)
 
     def download(self):
-        return Download(self)
+        download = Download(self)
+        self._size = download.size
+        return download
+
+    @property
+    def human_readable_size(self):
+        if not hasattr(self, '_size'):
+            self.download()
+        return human_readable_size(self._size)
 
     def __repr__(self):
         d = self.__dict__.copy()
@@ -217,3 +237,5 @@ class GithubMigrator(object):
         curlstdout, curlstderr = subp.communicate()
         os.remove(download_file.name)
         return 'https://github.com/' + res.path
+
+
